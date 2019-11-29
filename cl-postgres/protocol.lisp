@@ -212,6 +212,25 @@ this raises a condition."
                  (when buffer
                    (gss-auth-buffer-message socket buffer))
                  (force-output socket)
+                 continue-needed))
+             (init-sasl-msg (in-buffer)
+               (when (null sasl-init-function)
+                 (when (null (find-package "CL-SASL"))
+                   (error 'database-error :message  "To use SASL authentication, make sure the CL-SASL package is loaded."))
+                 (setq sasl-init-function (find-symbol "-TODO-" "CL-SASL"))
+                 (unless sasl-init-function
+                   (error 'database-error :message "-TODO- not found in CL-SASL package")))
+               (multiple-value-bind (continue-needed context buffer flags)
+                   (funcall sasl-init-function
+                            (format nil "~a@~a" (connection-service conn) (connection-host conn))
+                            :flags '(:mutual)
+                            :context sasl-context
+                            :input-token in-buffer)
+                 (declare (ignore flags))
+                 (setq sasl-context context)
+                 (when buffer
+                   (sasl-auth-buffer-message socket buffer))
+                 (force-output socket)
                  continue-needed)))
 
       (loop
@@ -234,7 +253,14 @@ this raises a condition."
                        (init-gss-msg nil))
                     (8 (unless gss-context
                          (error 'database-error :message "Got GSS continuation message without a context"))
-                       (init-gss-msg (read-bytes socket (- size 4)))))))))))
+                       (init-gss-msg (read-bytes socket (- size 4))))
+                    (10 (when sasl-context
+                          (error 'database-error :message "Unsupported SASL authentication requested."))
+                       (init-sasl-msg nil))
+                    (11 (unless sasl-context
+                          (error 'database-error :message "Got SASL continuation message without a context"))
+                       (init-sasl-msg (read-bytes socket (- size 4))))
+                    (12 (error 'database-error :message "Unsupported SASL finalizer message."))))))))
   (loop
    (message-case socket
      ;; ReadyForQuery
